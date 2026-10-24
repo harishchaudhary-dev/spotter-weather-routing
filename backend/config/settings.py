@@ -17,12 +17,14 @@ def env_list(name: str, default: str = "") -> list[str]:
     return [item.strip() for item in os.getenv(name, default).split(",") if item.strip()]
 
 
-DEBUG = env_bool("DJANGO_DEBUG", True)
+# Never default to debug on a hosting platform (Vercel and Render both set these variables).
+ON_PLATFORM = bool(os.getenv("VERCEL") or os.getenv("RENDER"))
+DEBUG = env_bool("DJANGO_DEBUG", not ON_PLATFORM)
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-only-insecure-key")
 if not DEBUG and SECRET_KEY == "dev-only-insecure-key":
     raise RuntimeError("DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is false")
 
-ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,.onrender.com")
+ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,.onrender.com,.vercel.app")
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
 
 INSTALLED_APPS = [
@@ -71,6 +73,8 @@ STORAGES = {
 
 # --- CORS (only needed when the frontend is hosted on a different origin).
 CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+# The API is public, read-only and cookie-less, so any Vercel-hosted frontend may call it by default.
+CORS_ALLOWED_ORIGIN_REGEXES = env_list("CORS_ALLOWED_ORIGIN_REGEXES", r"^https://[a-z0-9-]+\.vercel\.app$")
 
 # --- Cache: Redis when available (shared across gunicorn workers), otherwise in-process memory.
 REDIS_URL = os.getenv("REDIS_URL")
