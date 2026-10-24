@@ -118,7 +118,8 @@ OPEN_METEO_API_KEY = os.getenv("OPEN_METEO_API_KEY", "")
 # OSRM's public server only has a car profile; per-segment speeds are capped to a truck's
 # realistic cruising speed so checkpoint ETAs (and therefore the weather we look up) are honest.
 TRUCK_MAX_SPEED_MPH = float(os.getenv("TRUCK_MAX_SPEED_MPH", "65"))
-WEATHER_CACHE_TTL_S = int(os.getenv("WEATHER_CACHE_TTL_S", str(30 * 60)))
+# Forecast models refresh roughly hourly, so an hour-old forecast is still current.
+WEATHER_CACHE_TTL_S = int(os.getenv("WEATHER_CACHE_TTL_S", str(60 * 60)))
 # Forecast sampling cell (degrees). Checkpoints/heatmap points in one cell share a forecast. 0.2° (~13 mi)
 # is close to the forecast models' effective resolution and keeps a coast-to-coast trip inside
 # Open-Meteo's free tier (600 locations/min). Use 0.1 with a commercial key.

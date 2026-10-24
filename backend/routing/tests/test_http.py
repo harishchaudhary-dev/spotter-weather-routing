@@ -29,9 +29,18 @@ def respond(monkeypatch):
     return install
 
 
-def test_rate_limit_has_a_specific_message(respond):
-    respond(FakeResponse(429, {"reason": "Minutely API request limit exceeded"}))
-    with pytest.raises(http.ProviderError, match="rate limit"):
+@pytest.mark.parametrize(
+    "reason, hint",
+    [
+        ("Minutely API request limit exceeded. Please try again in one minute.", "wait a minute"),
+        ("Hourly API request limit exceeded. Please try again in the next hour.", "within the hour"),
+        ("Daily API request limit exceeded. Please try again tomorrow.", "midnight UTC"),
+        (None, "wait a minute"),
+    ],
+)
+def test_rate_limit_message_names_the_quota(respond, reason, hint):
+    respond(FakeResponse(429, {"error": True, "reason": reason} if reason else None))
+    with pytest.raises(http.ProviderError, match=f"rate limit reached.*{hint}"):
         http.get_json("https://x", service="Weather service")
 
 
