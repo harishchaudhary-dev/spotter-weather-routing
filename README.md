@@ -125,13 +125,16 @@ frontend/src/
 * **Time semantics.** Wind is an instantaneous value at the hour mark, so we read the **nearest hour**.
   Rain and snow are **totals over the preceding hour**, so for a truck passing at 13:20 we read the 14:00 value,
   which covers 13:00–14:00. That is exactly the in/hr rate for the hour the truck is driving.
-* **Efficiency.** Points are bucketed into `WEATHER_CELL_DEG` cells (0.2°, about 13 mi). Forecasts are cached per
-  (cell, UTC day), missing cells are fetched 100 locations per request with 4 requests in parallel, and every
+* **Efficiency.** Points are bucketed into `WEATHER_CELL_DEG` cells (0.25°, about 17 mi). Forecasts are cached per
+  (cell, UTC day) for an hour in a cache shared by all worker processes (Redis if `REDIS_URL` is set, otherwise
+  files on local disk). Missing cells are fetched 100 locations per request with 4 requests in parallel, and every
   checkpoint on all 3 routes resolves in **one batched weather pass**. Re-sampling at a different interval or
   changing the load usually needs **zero** new weather calls.
-* Why 0.2°: it's close to the forecast models' effective resolution, and it keeps a coast-to-coast plan plus
-  heatmap within the free tier's ~600 locations/minute. With a commercial key, set `OPEN_METEO_API_KEY` and
-  `WEATHER_CELL_DEG=0.1`.
+* **Free-tier quota.** Open-Meteo's free tier allows about 600 locations/minute per IP. 0.25° matches the GFS
+  model grid and keeps the worst case, a Los Angeles → New York plan plus heatmap, at about 450 lookups. If the
+  per-minute quota is still hit (hosting platforms share outbound IPs), the backend waits and retries up to
+  twice instead of failing. Hourly and daily quota errors fail fast with a message naming the quota. With a
+  commercial key, set `OPEN_METEO_API_KEY` and `WEATHER_CELL_DEG=0.1`.
 
 ### 5. Risk rules (`domain/risk.py`)
 | Condition | Low | Moderate | High | Severe | No Travel |
@@ -159,7 +162,7 @@ could beat a route with a few Severe miles, because it technically has "fewer Se
 ### 7. Heatmap and UI performance
 * The backend builds a **regular grid within a 25–50 mi buffer around each route**. Routes are buffered
   separately, so the gap between widely separated alternatives isn't filled. Grid spacing is the finest multiple
-  of the weather cell that keeps ≤ 260 points, so each grid point is a cached forecast cell.
+  of the weather cell that keeps ≤ 160 points, so each grid point is a cached forecast cell.
 * All **49 hours × 4 metrics** ship in one gzip-compressed response. The frontend builds the GeoJSON **once**,
   pre-normalizing every hour/metric into feature properties. **Moving the slider changes a single
   `heatmap-weight` expression**: no data upload, no React re-render of map layers. All 49 slider steps take

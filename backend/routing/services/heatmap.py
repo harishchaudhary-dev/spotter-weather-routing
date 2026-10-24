@@ -16,7 +16,7 @@ from ..domain.geo import LatLon, ProximityIndex, cumulative_miles, resample
 from ..domain.risk import Conditions, assess
 from ..providers import weather
 
-MAX_POINTS = 260
+MAX_POINTS = 160  # each point is one weather lookup against the free per-minute quota
 MIN_BUFFER_MI, MAX_BUFFER_MI = 25.0, 50.0
 MILES_PER_DEG_LAT = 69.0
 

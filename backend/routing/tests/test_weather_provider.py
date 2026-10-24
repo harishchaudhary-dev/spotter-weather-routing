@@ -4,7 +4,7 @@ import pytest
 from django.core.cache import cache
 
 from routing.providers import weather
-from routing.providers.http import ProviderError
+from routing.providers.http import ProviderError, RateLimitError
 
 
 def fake_location(first: date, last: date, rain_unit="inch", snow_unit="inch"):
@@ -91,6 +91,45 @@ def test_missing_days_raise_provider_error(monkeypatch):
     monkeypatch.setattr(weather, "get_json", lambda *a, **k: fake_location(date(2020, 1, 1), date(2020, 1, 1)))
     with pytest.raises(ProviderError):
         weather.conditions_at([(40.0, -100.0, datetime(2026, 3, 1, 10, tzinfo=timezone.utc))])
+
+
+class TestQuotaRetry:
+    WHEN = datetime(2026, 3, 1, 10, tzinfo=timezone.utc)
+
+    def install(self, monkeypatch, failures):
+        """Fail with the given RateLimitErrors first, then answer normally."""
+        calls, sleeps = [], []
+        pending = list(failures)
+
+        def fake_get_json(url, params, service, **_):
+            calls.append(params)
+            if pending:
+                raise pending.pop(0)
+            first, last = date.fromisoformat(params["start_date"]), date.fromisoformat(params["end_date"])
+            return fake_location(first, last)
+
+        monkeypatch.setattr(weather, "get_json", fake_get_json)
+        monkeypatch.setattr(weather.time, "sleep", sleeps.append)
+        return calls, sleeps
+
+    def test_per_minute_quota_is_waited_out(self, monkeypatch):
+        calls, sleeps = self.install(monkeypatch, [RateLimitError("limit", "minute")])
+        [c] = weather.conditions_at([(40.0, -100.0, self.WHEN)])
+        assert c.wind_mph == 10
+        assert len(calls) == 2 and sleeps == [20.0]
+
+    def test_gives_up_after_configured_retries(self, monkeypatch):
+        calls, sleeps = self.install(monkeypatch, [RateLimitError("limit", "minute")] * 5)
+        with pytest.raises(RateLimitError):
+            weather.conditions_at([(40.0, -100.0, self.WHEN)])
+        assert len(calls) == 3 and len(sleeps) == 2
+
+    @pytest.mark.parametrize("scope", ["hour", "day"])
+    def test_long_quotas_fail_immediately(self, monkeypatch, scope):
+        calls, sleeps = self.install(monkeypatch, [RateLimitError("limit", scope)])
+        with pytest.raises(RateLimitError):
+            weather.conditions_at([(40.0, -100.0, self.WHEN)])
+        assert len(calls) == 1 and sleeps == []
 
 
 def test_hourly_grid_shape(fake_api):

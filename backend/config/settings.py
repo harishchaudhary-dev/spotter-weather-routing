@@ -1,5 +1,7 @@
 """Django settings. Everything deploy-specific comes from environment variables (see .env.example)."""
 import os
+import sys
+import tempfile
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -76,7 +78,10 @@ CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", "http://localhost:5173,h
 # The API is public, read-only and cookie-less, so any Vercel-hosted frontend may call it by default.
 CORS_ALLOWED_ORIGIN_REGEXES = env_list("CORS_ALLOWED_ORIGIN_REGEXES", r"^https://[a-z0-9-]+\.vercel\.app$")
 
-# --- Cache: Redis when available (shared across gunicorn workers), otherwise in-process memory.
+# --- Cache. Weather/route caching is what keeps us inside the free weather quota, so it must be
+# shared by every worker process: Redis if configured, otherwise files on local disk (shared by
+# all gunicorn workers on the machine). Tests use an isolated in-memory cache.
+TESTING = "pytest" in sys.modules
 REDIS_URL = os.getenv("REDIS_URL")
 if REDIS_URL:
     CACHES = {
@@ -86,11 +91,14 @@ if REDIS_URL:
             "OPTIONS": {"IGNORE_EXCEPTIONS": True},
         }
     }
+elif TESTING:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 else:
     CACHES = {
         "default": {
-            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-            "OPTIONS": {"MAX_ENTRIES": 50_000},
+            "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
+            "LOCATION": os.getenv("CACHE_DIR", str(Path(tempfile.gettempdir()) / "stormline-cache")),
+            "OPTIONS": {"MAX_ENTRIES": 50_000, "CULL_FREQUENCY": 4},
         }
     }
 
@@ -120,10 +128,13 @@ OPEN_METEO_API_KEY = os.getenv("OPEN_METEO_API_KEY", "")
 TRUCK_MAX_SPEED_MPH = float(os.getenv("TRUCK_MAX_SPEED_MPH", "65"))
 # Forecast models refresh roughly hourly, so an hour-old forecast is still current.
 WEATHER_CACHE_TTL_S = int(os.getenv("WEATHER_CACHE_TTL_S", str(60 * 60)))
-# Forecast sampling cell (degrees). Checkpoints/heatmap points in one cell share a forecast. 0.2° (~13 mi)
-# is close to the forecast models' effective resolution and keeps a coast-to-coast trip inside
+# Forecast sampling cell (degrees). Checkpoints/heatmap points in one cell share a forecast. 0.25°
+# (~17 mi) matches the GFS global model grid and keeps a coast-to-coast plan + heatmap well inside
 # Open-Meteo's free tier (600 locations/min). Use 0.1 with a commercial key.
-WEATHER_CELL_DEG = float(os.getenv("WEATHER_CELL_DEG", "0.2"))
+WEATHER_CELL_DEG = float(os.getenv("WEATHER_CELL_DEG", "0.25"))
+# Per-minute quota errors clear by themselves: wait them out this many times before failing.
+WEATHER_RATE_LIMIT_RETRIES = int(os.getenv("WEATHER_RATE_LIMIT_RETRIES", "2"))
+WEATHER_RATE_LIMIT_WAIT_S = float(os.getenv("WEATHER_RATE_LIMIT_WAIT_S", "20"))
 ROUTE_CACHE_TTL_S = int(os.getenv("ROUTE_CACHE_TTL_S", str(6 * 60 * 60)))
 MAX_DEPARTURE_DAYS_AHEAD = int(os.getenv("MAX_DEPARTURE_DAYS_AHEAD", "7"))
 

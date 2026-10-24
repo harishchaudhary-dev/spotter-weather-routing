@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from typing import Sequence
@@ -25,7 +26,7 @@ from django.core.cache import cache
 
 from ..domain.geo import LatLon
 from ..domain.risk import Conditions
-from .http import ProviderError, get_json
+from .http import ProviderError, RateLimitError, get_json
 
 log = logging.getLogger(__name__)
 
@@ -145,7 +146,7 @@ def _fetch(cells: list[Cell], first: date, last: date) -> dict[tuple[Cell, date]
     }
     if settings.OPEN_METEO_API_KEY:
         params["apikey"] = settings.OPEN_METEO_API_KEY
-    data = get_json(settings.OPEN_METEO_URL, params, service="Weather service")
+    data = _get_with_quota_retry(params)
     locations = data if isinstance(data, list) else [data]
     if len(locations) != len(cells):
         raise ProviderError("Weather service returned an unexpected number of locations.")
@@ -155,6 +156,19 @@ def _fetch(cells: list[Cell], first: date, last: date) -> dict[tuple[Cell, date]
         for day, series in _parse_location(loc).items():
             out[(cell, day)] = series
     return out
+
+
+def _get_with_quota_retry(params: dict):
+    """A per-minute quota error clears on its own, so wait it out a couple of times rather than
+    failing the trip. Hourly/daily quota errors won't clear soon, so they surface immediately."""
+    for attempt in range(settings.WEATHER_RATE_LIMIT_RETRIES + 1):
+        try:
+            return get_json(settings.OPEN_METEO_URL, params, service="Weather service")
+        except RateLimitError as exc:
+            if exc.scope != "minute" or attempt == settings.WEATHER_RATE_LIMIT_RETRIES:
+                raise
+            log.warning("weather: per-minute quota hit, retrying in %ss", settings.WEATHER_RATE_LIMIT_WAIT_S)
+            time.sleep(settings.WEATHER_RATE_LIMIT_WAIT_S)
 
 
 def _parse_location(loc: dict) -> dict[date, DaySeries]:
